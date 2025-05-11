@@ -1,111 +1,59 @@
-using UnityEngine;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace ObjectPoolingSystem
 {
-    public class ObjectPoolManager : MonoBehaviour
+    public static class ObjectPoolManager
     {
-        [SerializeField] private List<ObjectPool> objectPools = new();
-        private readonly Dictionary<string, Queue<GameObject>> _poolDictionary = new();
-        private readonly Dictionary<string, GameObject> _prefabLookup = new();
+        private static readonly Dictionary<GameObject, Queue<GameObject>> _poolDictionary = new();
 
-#if UNITY_EDITOR
-        [SerializeField] private bool debug = false;
-#endif
-
-        protected virtual void Awake()
+        public static GameObject SpawnFromPool(GameObject prefab, Vector3 position, Quaternion rotation)
         {
-            InitializePools();
-        }
-
-        private void InitializePools()
-        {
-            foreach (var pool in objectPools)
+            if (!_poolDictionary.ContainsKey(prefab))
             {
-                if (string.IsNullOrEmpty(pool.key))
-                {
-                    Debug.LogWarning("ObjectPool key is missing.");
-                    continue;
-                }
-
-                if (pool.prefab == null)
-                {
-                    Debug.LogWarning($"ObjectPool '{pool.key}' is missing a prefab.");
-                    continue;
-                }
-
-                if (_poolDictionary.ContainsKey(pool.key))
-                {
-                    Debug.LogWarning($"Duplicate key detected: {pool.key}. Skipping.");
-                    continue;
-                }
-
-                _poolDictionary[pool.key] = new Queue<GameObject>();
-                _prefabLookup[pool.key] = pool.prefab;
-
-                for (int i = 0; i < pool.size; i++)
-                {
-                    Instantiate(pool.prefab).AddComponent<ObjectPoolController>().SetObjectPool(this, pool.key, false);
-                }
-
-#if UNITY_EDITOR
-                if (debug)
-                    Debug.Log($"[ObjectPooling] Initialized pool '{pool.key}' with {pool.size} objects.");
-#endif
-            }
-        }
-
-        public GameObject SpawnFromPool(string key, Vector3 position, Quaternion rotation)
-        {
-            if (!_poolDictionary.ContainsKey(key))
-            {
-                Debug.LogWarning($"Object pool with key '{key}' not found.");
-                return null;
+                _poolDictionary[prefab] = new Queue<GameObject>();
             }
 
             GameObject obj;
 
-            if (_poolDictionary[key].Count > 0)
+            if (_poolDictionary[prefab].Count > 0)
             {
-                obj = _poolDictionary[key].Dequeue();
+                obj = _poolDictionary[prefab].Dequeue();
                 obj.transform.SetPositionAndRotation(position, rotation);
                 obj.SetActive(true);
             }
             else
             {
-                obj = Instantiate(_prefabLookup[key], position, rotation);
-                obj.AddComponent<ObjectPoolController>().SetObjectPool(this, key);
-
-#if UNITY_EDITOR
-                if (debug)
-                    Debug.Log($"[ObjectPooling] Instantiated new '{key}' as pool was empty.");
-#endif
+                obj = GameObject.Instantiate(prefab, position, rotation);
+                obj.TryGetComponent<ObjectPoolController>(out var poolController);
+                if (poolController == null)
+                {
+                    poolController = obj.AddComponent<ObjectPoolController>();
+                }
+                poolController.SetPrefab(prefab);
             }
 
             return obj;
         }
 
-        public T SpawnFromPool<T>(string key, Vector3 position, Quaternion rotation) where T : Component
+        public static T SpawnFromPool<T>(GameObject prefab, Vector3 position, Quaternion rotation) where T : Component
         {
-            return SpawnFromPool(key, position, rotation).GetComponent<T>();
+            return SpawnFromPool(prefab, position, rotation).GetComponent<T>();
         }
 
-        public void ReturnToPool(GameObject obj, string key)
+        public static void ReturnToPool(GameObject prefab, GameObject obj)
         {
-            if (!_poolDictionary.ContainsKey(key))
+            if (obj.activeSelf)
             {
-                Debug.LogWarning($"Trying to return object to non-existent pool: '{key}'");
-                Destroy(obj);
-                return;
+                obj.SetActive(false);
             }
 
-            obj.SetActive(false);
-            _poolDictionary[key].Enqueue(obj);
+            if (!_poolDictionary.ContainsKey(prefab))
+            {
+                _poolDictionary[prefab] = new Queue<GameObject>();
+            }
 
-#if UNITY_EDITOR
-            if (debug)
-                Debug.Log($"[ObjectPooling] Returned '{obj.name}' to pool '{key}'.");
-#endif
+            _poolDictionary[prefab].Enqueue(obj);
         }
     }
 }
